@@ -7,6 +7,9 @@ output: github_document
 
 ```{r}
 library(tidyverse)
+library(forcats)
+library(purrr)
+library(viridis)
 ```
 
 
@@ -36,7 +39,20 @@ is a data entry mistake. Modifiy victim_race to have categories white and
 non-white, with white as the reference category. Be sure that  victim_age is numeric.
 
 ```{r}
+## create city_state var and filter out cities
+homicide_data =
+  homicide_data %>% 
+  mutate(city_state = str_c(city, state, sep = ", ")) %>% 
+  filter(!(city_state %in% c("Dallas, TX", "Phoenix, AZ", 
+                            "Kansas City, MO", "Tulsa, AL")))
 
+## additional tidying  
+homicide_data = 
+  homicide_data %>% 
+  mutate(solved = as.numeric(disposition == "Closed by arrest"),
+         victim_race_white = ifelse(victim_race == "White", "white", "nonwhite"),
+         victim_race_white = fct_relevel(victim_race_white, ref = "white"),
+         victim_age = as.numeric(victim_age))
 ```
 
 ## Part 3: Fit a logistic regression model for Baltimore, MD
@@ -48,7 +64,23 @@ odds ratio for solving homicides comparing black victims to white victims keepin
 all other variables fixed.
 
 ```{r}
+balt_solved_logistic = 
+  homicide_data %>% 
+  filter (city_state == "Baltimore, MD") %>% 
+  glm(solved ~ victim_age + victim_sex + victim_race_white, data = ., family = binomial())
 
+  balt_solved_logistic %>% 
+    broom::tidy(conf.int = TRUE) %>% 
+    mutate(OR = exp(estimate),
+           term = recode(term, victim_sexMale = "victim_sex: male", 
+                         victim_race_whitenonwhite = "victim_race: nonwhite")) %>% 
+    select(Term = term, "Odds Ratio" = OR, "Conf: Lower bound" = conf.low, 
+           "Conf: Upper bound" = conf.high) %>% 
+    knitr::kable(digits = 3)
+  
+  
+  balt_solved_logistic %>% 
+    broom::glance()
 ```
 
 ## Part 4: Fit a logistical regression model for each city
@@ -58,6 +90,24 @@ this within a “tidy” pipeline, making use of purrr::map, list columns, and u
 as necessary to create a dataframe with estimated ORs and CIs for each city.
 
 ```{r}
+solved_logistic_function = function(df) {
+  glm_fit = glm(solved ~ victim_age + victim_sex + victim_race_white, 
+      data = df, family = binomial())
+  
+  glm_fit %>% 
+  broom::tidy() %>% 
+  mutate(OR = exp(estimate))
+}
+
+homocide_odds_city = 
+  homicide_data %>% 
+  group_by(city_state) %>% 
+  nest() %>% 
+  mutate(log_models = map(data, solved_logistic_function)) %>% 
+  select(-data) %>% 
+  unnest() %>% 
+  filter(term == "victim_race_whitenonwhite") %>% 
+  select(city_state, OR)
 
 ```
 
@@ -124,7 +174,3 @@ three-way interaction) between these
 
 Make this comparison in terms of the cross-validated prediction error; use 
 crossv_mc and functions in purrr as appropriate.
-
-Note that although we expect your model to be reasonable, model building itself 
-is not a main idea of the course and we don’t necessarily expect your model to 
-be “optimal”.
