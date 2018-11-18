@@ -4,12 +4,21 @@ author: "Annie Clark"
 date: "November 16, 2018"
 output: github_document
 ---
+Things to work on:
+
+* comments
+* question 1: figure out how to get confidence interval to work 
+* question 2: figure out lasso for building model
+
 
 ```{r}
 library(tidyverse)
 library(forcats)
 library(purrr)
 library(viridis)
+library(glmnet)
+library(modelr)
+
 ```
 
 
@@ -167,7 +176,21 @@ Load and clean the data for regression analysis (i.e. convert numeric to factor
 where appropriate, check for missing data, etc.).
 
 ```{r}
+birthweight_data = read_csv(file = "./data/birthweight.csv") %>% 
+  janitor::clean_names() %>% 
+  mutate(babysex = recode(babysex, `1` = "male", `2` = "female"), 
+         babysex = as.factor(babysex), 
+         frace = recode(frace,  `1` = "white", `2` = "black", `3` = "asian", 
+                        `4` = "puerto_rican", `8` = "other", `9` = "unknown"),
+         frace = as.factor(frace), 
+         mrace = recode(mrace,  `1` = "white", `2` = "black", `3` = "asian", 
+                        `4` = "puerto_rican", `8` = "other" ),
+         mrace = as.factor(mrace), 
+         malform = as.factor(malform)) %>% 
+  select(bwt, everything())
 
+skimr::skim(birthweight_data)
+## no missing data
 ```
 
 ## Part 2: Fit a regression model predicting birthweight
@@ -178,7 +201,99 @@ process, or a combination of the two. Describe your modeling process and show a
 plot of model residuals against fitted values – use add_predictions and add_residuals 
 in making this plot.
 
-## Part 3: Compare regression model to others
+```{r}
+
+##based on hypothesis, not data driven
+
+
+birthweight_model_function = function(df) {
+  lm(bwt ~ bhead + blength + delwt + gaweeks, data = df)
+}
+
+birthweight_model = birthweight_model_function(birthweight_data)
+
+  
+birthweight_data %>% 
+  add_predictions(birthweight_model) %>% 
+  add_residuals (birthweight_model) %>% 
+  ggplot(aes(x = pred, y = resid)) + 
+    geom_point(alpha = 0.3) +
+  labs(
+        title = "Hypothesized Regression Model: Residuals vs. Predicted Values",
+        x = "Predicted Birthweight (g)",
+        y = "Residuals"
+      )
+```
+
+
+```{r, eval = FALSE}
+##trying lasso
+
+birthweight_lasso = glmnet(birthweight_data, birthweight_data$bwt, alpha = 1, lambda = lambda)
+
+?glmnet
+
+x = model.matrix(bwt ~ ., data = birthweight_data)[, -1]
+y = birthweight_data$bwt
+lasso.mod = glmnet(as.matrix(x), y, alpha = 1)
+
+x <- model.matrix(Sepal.Length~., iris)[,-1]
+y <- iris$Sepal.Length
+mod <- cv.glmnet(as.matrix(x), y, alpha=1)
+
+as.matrix(coef(lasso.mod, lasso.mod$lambda.min))
+
+
+require(glmnet)
+
+ezlasso=function(df,yvar,folds=10,trace=F,alpha=1){
+  x<-model.matrix(as.formula(paste(yvar,"~.")),data=df)
+  x=x[,-1] ##remove intercept
+
+  glmnet1<-glmnet::cv.glmnet(x=x,y=df[,yvar],type.measure='mse',nfolds=folds,alpha=alpha)
+
+  co<-coef(glmnet1,s = "lambda.1se")
+  inds<-which(co!=0)
+  variables<-row.names(co)[inds]
+  variables<-variables[!(variables %in% '(Intercept)')];
+  return( c(yvar,variables));
+}
+
+ezlasso(birthweight_data, birthweight_data$bwt)
+
+
+ezlasso=function(df,yvar,folds=10,trace=F,alpha=1){
+  x<-model.matrix(as.formula(paste(yvar,"~.")),data=df)
+  x=x[,-1] ##remove intercept
+
+  glmnet1<-glmnet::cv.glmnet(x=x,y=df[,yvar],type.measure='mse',nfolds=folds,alpha=alpha)
+
+  co<-coef(glmnet1,s = "lambda.1se")
+  inds<-which(co!=0)
+  variables<-row.names(co)[inds]
+  variables<-variables[!(variables %in% '(Intercept)')];
+  return( c(yvar,variables));
+}
+
+x = model.matrix(bwt ~ ., data = birthweight_data)[, -1]
+y = birthweight_data$bwt
+lasso.mod = glmnet(as.matrix(x), y, alpha = 1)
+
+plot(lasso.mod, xvar = "lambda")
+
+
+coef(lasso.mod, s = 100)
+
+crossval <-  cv.glmnet(x = X, y = y)
+plot(crossval)
+penalty <- crossval$lambda.min #optimal lambda
+penalty #minimal shrinkage
+fit1 <-glmnet(x = X, y = y, alpha = 1, lambda = penalty ) #estimate the model with that
+coef(fit1)
+```
+
+
+## Part 3: Create additional models and compare using cross validation
 
 Compare your model to two others:
 
@@ -186,7 +301,57 @@ Compare your model to two others:
 * One using head circumference, length, sex, and all interactions (including the 
 three-way interaction) between these
 
-## Part 4: Cross validate!
+```{r}
+birthweight_model_alt1_function = function(df) {
+  lm(bwt ~ blength + gaweeks, data = df)
+}
+
+## birthweight_model_alt1_function(birthweight_data)
+
+birthweight_model_alt2_function = function(df) {
+  lm(bwt ~ bhead + blength + babysex +
+       (bhead * blength) + (bhead * babysex) + (blength * babysex) +
+       (bhead * blength * babysex), data = df)
+}
+
+## birthweight_model_alt2_function(birthweight_data)
+
+```
+
 
 Make this comparison in terms of the cross-validated prediction error; use 
 crossv_mc and functions in purrr as appropriate.
+
+```{r}
+cv_birthweight = 
+  crossv_mc(birthweight_data, 100) 
+
+cv_birthweight = 
+  cv_birthweight %>% 
+  mutate(birthweight_model = map(train, birthweight_model_function),
+         birthweight_model_alt1 = map(train, birthweight_model_alt1_function),
+         birthweight_model_alt2 = map(train, birthweight_model_alt2_function)) %>% 
+  mutate(rmse_birthweight_model = map2_dbl(birthweight_model, test, ~rmse(model = .x, data = .y)),
+         rmse_birthweight_model_alt1 = map2_dbl(birthweight_model_alt1, test, ~rmse(model = .x, data = .y)),
+         rmse_birthweight_model_alt2 = map2_dbl(birthweight_model_alt2, test, ~rmse(model = .x, data = .y)))
+
+
+
+cv_birthweight %>% 
+  select(starts_with("rmse")) %>% 
+  gather(key = model, value = rmse) %>% 
+  mutate(model = str_replace(model, "rmse_", ""),
+         model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse, color = model)) + 
+  geom_violin() +
+  theme(legend.position = "none") +
+  labs(
+        title = "Comparing predictive birthweight models by RMSE",
+        x = "Model",
+        y = "RMSE"
+      ) +
+    viridis::scale_color_viridis(
+      discrete = TRUE
+    )
+```
+
