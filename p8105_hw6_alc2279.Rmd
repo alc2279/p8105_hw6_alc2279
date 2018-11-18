@@ -77,10 +77,7 @@ balt_solved_logistic =
     select(Term = term, "Odds Ratio" = OR, "Conf: Lower bound" = conf.low, 
            "Conf: Upper bound" = conf.high) %>% 
     knitr::kable(digits = 3)
-  
-  
-  balt_solved_logistic %>% 
-    broom::glance()
+
 ```
 
 ## Part 4: Fit a logistical regression model for each city
@@ -95,9 +92,14 @@ solved_logistic_function = function(df) {
       data = df, family = binomial())
   
   glm_fit %>% 
-  broom::tidy() %>% 
-  mutate(OR = exp(estimate))
+    broom::tidy() %>% 
+    mutate(OR = exp(estimate),
+           conf_low = exp(estimate - (1.96 * std.error)), 
+           conf_high = exp(estimate + (1.96 * std.error)))
 }
+
+## cannot get broom::confint_tidy or broom_tidy(conf.int = TRUE) to work within funciton, therefore had to calculate standard deviations by hand
+
 
 homocide_odds_city = 
   homicide_data %>% 
@@ -107,8 +109,7 @@ homocide_odds_city =
   select(-data) %>% 
   unnest() %>% 
   filter(term == "victim_race_whitenonwhite") %>% 
-  select(city_state, OR)
-
+  select(city_state, OR, conf_low, conf_high)
 ```
 
 ## Part 5: Make a plot of the models by city
@@ -116,7 +117,22 @@ Create a plot that shows the estimated ORs and CIs for each city. Organize citie
 according to estimated OR, and comment on the plot.
 
 ```{r}
-
+homocide_odds_city %>% 
+  mutate(city_state = fct_reorder(city_state, desc(OR))) %>%
+  ggplot(aes(x = city_state, y = OR, color = city_state)) + 
+    geom_point() +
+    geom_errorbar(aes(ymin = conf_low, ymax = conf_high, width = 0.2)) + 
+    theme(axis.text.x = element_text(angle = 60, hjust = 1),
+          legend.position = "none") + 
+    labs(
+        title = "Odds Ratios of Non-White to Whites for Solved Homicides in 50 Large Cities",
+        x = "City, State",
+        y = "Odds Ratio (Non-Whites to Whites)", 
+        caption = "Data from the Washington Post"
+      ) +
+    viridis::scale_color_viridis(
+      discrete = TRUE
+    )
 ```
 
 # Problem 2
