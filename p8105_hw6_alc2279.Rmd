@@ -80,11 +80,13 @@ balt_solved_logistic =
 
   balt_solved_logistic %>% 
     broom::tidy(conf.int = TRUE) %>% 
-    mutate(OR = exp(estimate),
+    mutate(odds_ratio = exp(estimate),
+           adj_conf_low = exp(conf.low), 
+           adj_conf_high = exp(conf.high),
            term = recode(term, victim_sexMale = "victim_sex: male", 
                          victim_race_whitenonwhite = "victim_race: nonwhite")) %>% 
-    select(Term = term, "Odds Ratio" = OR, "Conf: Lower bound" = conf.low, 
-           "Conf: Upper bound" = conf.high) %>% 
+    select(Term = term, "Adj Odds Ratio" = odds_ratio, "Adj Conf: Lower bound" = adj_conf_low, 
+           "Adj Conf: Upper bound" = adj_conf_high) %>% 
     knitr::kable(digits = 3)
 
 ```
@@ -102,7 +104,7 @@ solved_logistic_function = function(df) {
   
   glm_fit %>% 
     broom::tidy() %>% 
-    mutate(OR = exp(estimate),
+    mutate(odds_ratio = exp(estimate),
            conf_low = exp(estimate - (1.96 * std.error)), 
            conf_high = exp(estimate + (1.96 * std.error)))
 }
@@ -110,15 +112,37 @@ solved_logistic_function = function(df) {
 ## cannot get broom::confint_tidy or broom_tidy(conf.int = TRUE) to work within funciton, therefore had to calculate standard deviations by hand
 
 
-homocide_odds_city = 
+homocide_odds_city_function = 
   homicide_data %>% 
-  group_by(city_state) %>% 
+  group_by(city_state) %>%       
   nest() %>% 
   mutate(log_models = map(data, solved_logistic_function)) %>% 
   select(-data) %>% 
   unnest() %>% 
   filter(term == "victim_race_whitenonwhite") %>% 
-  select(city_state, OR, conf_low, conf_high)
+  select(city_state, odds_ratio, conf_low, conf_high)
+```
+
+
+```{r}
+glm_homicide_function = function(df) {
+  glm(solved ~ victim_age + victim_sex + victim_race_white, data = df, family = binomial())
+}
+
+homocide_odds_city = 
+  homicide_data %>% 
+  group_by(city_state) %>%       
+  nest() %>% 
+  mutate(log_models = map(.x = data, glm_homicide_function),
+         tidy_models = map(log_models, broom::tidy, conf.int = TRUE))  %>% 
+  select(-data, -log_models) %>% 
+  unnest() %>% 
+  janitor::clean_names() %>% 
+  mutate(odds_ratio = exp(estimate), 
+         conf_low = exp(conf_low), 
+         conf_high = exp(conf_high)) %>% 
+  filter(term == "victim_race_whitenonwhite") %>% 
+  select(city_state, odds_ratio, conf_low, conf_high)
 ```
 
 ## Part 5: Make a plot of the models by city
@@ -127,16 +151,36 @@ according to estimated OR, and comment on the plot.
 
 ```{r}
 homocide_odds_city %>% 
-  mutate(city_state = fct_reorder(city_state, desc(OR))) %>%
-  ggplot(aes(x = city_state, y = OR, color = city_state)) + 
+  mutate(city_state = fct_reorder(city_state, desc(odds_ratio))) %>%
+  ggplot(aes(x = city_state, y = odds_ratio, color = city_state)) + 
     geom_point() +
     geom_errorbar(aes(ymin = conf_low, ymax = conf_high, width = 0.2)) + 
     theme(axis.text.x = element_text(angle = 60, hjust = 1),
           legend.position = "none") + 
     labs(
-        title = "Odds Ratios of Non-White to Whites for Solved Homicides in 50 Large Cities",
+        title = "Adjusted Odds Ratios of Non-White to Whites for Solved Homicides in 50 Large Cities",
         x = "City, State",
-        y = "Odds Ratio (Non-Whites to Whites)", 
+        y = "Adjusted Odds Ratio (Non-Whites to Whites)", 
+        caption = "Data from the Washington Post"
+      ) +
+    viridis::scale_color_viridis(
+      discrete = TRUE
+    )
+```
+
+
+```{r}
+homocide_odds_city_function %>% 
+  mutate(city_state = fct_reorder(city_state, desc(odds_ratio))) %>%
+  ggplot(aes(x = city_state, y = odds_ratio, color = city_state)) + 
+    geom_point() +
+    geom_errorbar(aes(ymin = conf_low, ymax = conf_high, width = 0.2)) + 
+    theme(axis.text.x = element_text(angle = 60, hjust = 1),
+          legend.position = "none") + 
+    labs(
+        title = "Adjusted Odds Ratios of Non-White to Whites for Solved Homicides in 50 Large Cities",
+        x = "City, State",
+        y = "Adjusted Odds Ratio (Non-Whites to Whites)", 
         caption = "Data from the Washington Post"
       ) +
     viridis::scale_color_viridis(
@@ -317,7 +361,6 @@ birthweight_model_alt2_function = function(df) {
 ## birthweight_model_alt2_function(birthweight_data)
 
 ```
-
 
 Make this comparison in terms of the cross-validated prediction error; use 
 crossv_mc and functions in purrr as appropriate.
