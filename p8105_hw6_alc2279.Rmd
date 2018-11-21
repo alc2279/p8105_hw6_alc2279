@@ -79,14 +79,12 @@ balt_solved_logistic =
   glm(solved ~ victim_age + victim_sex + victim_race_white, data = ., family = binomial())
 
   balt_solved_logistic %>% 
-    broom::tidy(conf.int = TRUE) %>% 
-    mutate(odds_ratio = exp(estimate),
-           adj_conf_low = exp(conf.low), 
-           adj_conf_high = exp(conf.high),
-           term = recode(term, victim_sexMale = "victim_sex: male", 
+    broom::tidy(conf.int = TRUE, exponentiate = TRUE) %>% 
+    janitor::clean_names() %>%
+    mutate(term = recode(term, victim_sexMale = "victim_sex: male", 
                          victim_race_whitenonwhite = "victim_race: nonwhite")) %>% 
-    select(Term = term, "Adj Odds Ratio" = odds_ratio, "Adj Conf: Lower bound" = adj_conf_low, 
-           "Adj Conf: Upper bound" = adj_conf_high) %>% 
+    select(Term = term, "Adj Odds Ratio" = estimate, "Adj Conf: Lower bound" = conf_low, 
+           "Adj Conf: Upper bound" = conf_high) %>% 
     knitr::kable(digits = 3)
 
 ```
@@ -129,12 +127,33 @@ glm_homicide_function = function(df) {
   glm(solved ~ victim_age + victim_sex + victim_race_white, data = df, family = binomial())
 }
 
+
 homocide_odds_city = 
   homicide_data %>% 
   group_by(city_state) %>%       
   nest() %>% 
   mutate(log_models = map(.x = data, glm_homicide_function),
-         tidy_models = map(log_models, broom::tidy, conf.int = TRUE))  %>% 
+         tidy_models = map(log_models, broom::tidy))  %>% 
+  select(-data, -log_models) %>% 
+  unnest() %>% 
+  janitor::clean_names() %>% 
+  mutate(conf_low = estimate - (1.96 * std_error), 
+         conf_high = estimate + (1.96 * std_error)) %>% 
+  filter(term == "victim_race_whitenonwhite") %>% 
+  select(city_state, estimate, conf_low, conf_high)
+
+
+broom_function = function(df) {
+  df %>% 
+    broom::tidy(conf.int = TRUE, exponentiate = TRUE)
+}
+
+
+  homicide_data %>% 
+  group_by(city_state) %>%       
+  nest() %>% 
+  mutate(log_models = map(.x = data, glm_homicide_function),
+         tidy_models = map(log_models, broom_function))  %>% 
   select(-data, -log_models) %>% 
   unnest() %>% 
   janitor::clean_names() %>% 
@@ -151,8 +170,8 @@ according to estimated OR, and comment on the plot.
 
 ```{r}
 homocide_odds_city %>% 
-  mutate(city_state = fct_reorder(city_state, desc(odds_ratio))) %>%
-  ggplot(aes(x = city_state, y = odds_ratio, color = city_state)) + 
+  mutate(city_state = fct_reorder(city_state, desc(estimate))) %>%
+  ggplot(aes(x = city_state, y = estimate, color = city_state)) + 
     geom_point() +
     geom_errorbar(aes(ymin = conf_low, ymax = conf_high, width = 0.2)) + 
     theme(axis.text.x = element_text(angle = 60, hjust = 1),
